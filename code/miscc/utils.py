@@ -32,7 +32,7 @@ def drawCaption(convas, captions, ixtoword, vis_size, off1=2, off2=2):
     img_txt = Image.fromarray(convas)
     # get a font
     # fnt = None  # ImageFont.truetype('Pillow/Tests/fonts/FreeMono.ttf', 50)
-    fnt = ImageFont.truetype('Pillow/Tests/fonts/FreeMono.ttf', 50)
+    fnt = ImageFont.truetype('C:/Windows/Fonts/arial.ttf', 50)
     # get a drawing context
     d = ImageDraw.Draw(img_txt)
     sentence_list = []
@@ -219,20 +219,54 @@ def build_super_images2(real_imgs, captions, cap_lens, ixtoword,
         row_txt = []
         row_beforeNorm = []
         conf_score = []
+        # for j in range(num_attn):
+        #     one_map = attn[j]
+        #     mask0 = one_map > (2. * thresh)
+        #     conf_score.append(np.sum(one_map * mask0))
+        #     mask = one_map > thresh
+        #     one_map = one_map * mask
+        #     if (vis_size // att_sze) > 1:
+        #         one_map = \
+        #             skimage.transform.pyramid_expand(one_map, sigma=20,
+        #                                              upscale=vis_size // att_sze)
+        #     minV = one_map.min()
+        #     maxV = one_map.max()
+        #     one_map = (one_map - minV) / (maxV - minV)
+        #     row_beforeNorm.append(one_map)
         for j in range(num_attn):
+            # one_map shape originally = (att_sze, att_sze, 3)
             one_map = attn[j]
+
+            # convert to grayscale (important: fix multichannel issues)
+            if one_map.ndim == 3:
+                one_map = one_map.mean(axis=2)
+
+            # masking
             mask0 = one_map > (2. * thresh)
             conf_score.append(np.sum(one_map * mask0))
+
             mask = one_map > thresh
             one_map = one_map * mask
+
+            # upscale without creating multi-channel
             if (vis_size // att_sze) > 1:
-                one_map = \
-                    skimage.transform.pyramid_expand(one_map, sigma=20,
-                                                     upscale=vis_size // att_sze)
+                one_map = skimage.transform.pyramid_expand(
+                    one_map,
+                    sigma=20,
+                    upscale=vis_size // att_sze,
+                    channel_axis=None   # IMPORTANT FIX
+                )
+
+            # Normalize safely
             minV = one_map.min()
             maxV = one_map.max()
-            one_map = (one_map - minV) / (maxV - minV)
+            if maxV - minV < 1e-8:
+                one_map = np.zeros_like(one_map)
+            else:
+                one_map = (one_map - minV) / (maxV - minV)
+
             row_beforeNorm.append(one_map)
+
         sorted_indices = np.argsort(conf_score)[::-1]
 
         for j in range(num_attn):
@@ -240,7 +274,14 @@ def build_super_images2(real_imgs, captions, cap_lens, ixtoword,
             one_map *= 255
             #
             PIL_im = Image.fromarray(np.uint8(img))
-            PIL_att = Image.fromarray(np.uint8(one_map))
+            one_map_uint8 = np.uint8(one_map * 255)
+
+            # ensure shape is (H, W)
+            if one_map_uint8.ndim == 3:
+                one_map_uint8 = one_map_uint8[:, :, 0]
+
+            PIL_att = Image.fromarray(one_map_uint8, mode="L")
+            # PIL_att = Image.fromarray(np.uint8(one_map))
             merged = \
                 Image.new('RGBA', (vis_size, vis_size), (0, 0, 0, 0))
             mask = Image.new('L', (vis_size, vis_size), (180))  # (210)
@@ -248,7 +289,8 @@ def build_super_images2(real_imgs, captions, cap_lens, ixtoword,
             merged.paste(PIL_att, (0, 0), mask)
             merged = np.array(merged)[:, :, :3]
 
-            row.append(np.concatenate([one_map, middle_pad], 1))
+            one_map_color = np.stack([one_map, one_map, one_map], axis=2)
+            row.append(np.concatenate([one_map_color, middle_pad], 1))
             #
             row_merge.append(np.concatenate([merged, middle_pad], 1))
             #
